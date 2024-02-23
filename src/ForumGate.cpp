@@ -10,7 +10,6 @@
 
 #include "StaticFileHandler.h"
 #include "ProxyPass.h"
-#include "utils/LruList.hpp"
 
 using namespace std::string_literals;
 
@@ -18,6 +17,10 @@ namespace beast = boost::beast; // from <boost/beast.hpp>
 namespace http = beast::http; // from <boost/beast/http.hpp>
 namespace net = boost::asio; // from <boost/asio.hpp>
 using tcp = boost::asio::ip::tcp; // from <boost/asio/ip/tcp.hpp>
+
+constexpr size_t MAX_ALIVE_CONN = 1024; // 最多保留多少个Keep-Alive连接
+
+std::atomic_size_t alive_conns;
 
 // 代理列表，后期可以考虑做成配置文件的形式，也很简单
 const proxy_pass proxy_passes[]
@@ -32,24 +35,19 @@ const proxy_pass proxy_passes[]
 class session : public std::enable_shared_from_this<session>
 {
     net::io_context& ioc_;
-    std::shared_ptr<lru_list<std::string, std::shared_ptr<session>>> alive_sessions_;
-
-    std::string address_;
     beast::tcp_stream stream_;
     beast::flat_buffer buffer_;
     std::shared_ptr<std::filesystem::path const> doc_root_;
     http::request<http::dynamic_body> req_;
 
+    bool keepd_alive{false};
+
 public:
     session(
         net::io_context& ioc,
-        std::shared_ptr<lru_list<std::string, std::shared_ptr<session>>> const& alive_sessions,
         tcp::socket&& socket,
-        std::string address,
         std::shared_ptr<std::filesystem::path const> const& doc_root):
         ioc_(ioc),
-        alive_sessions_(alive_sessions),
-        address_(std::move(address)),
         stream_(std::move(socket)),
         doc_root_(doc_root)
     {
@@ -93,10 +91,15 @@ public:
     void handle_request(const std::filesystem::path& doc_root,
                         http::request<http::dynamic_body>&& req)
     {
+        if (req.keep_alive() && !keepd_alive && alive_conns.load() > MAX_ALIVE_CONN)
+            // 系统资源不足，不能继续维持长链接
+                req.keep_alive(false);
+
         for (const auto& proxy_pass : proxy_passes)
         {
             if (proxy_pass.match(req.target()))
             {
+                req.keep_alive(false); // 代理暂时不维持长链接
                 auto callback_func = std::bind(&session::send_response, shared_from_this(), std::placeholders::_1);
                 return proxy_pass.handle(ioc_, std::move(req), callback_func);
             }
@@ -127,15 +130,14 @@ public:
             return fail(ec, "write");
 
         if (!keep_alive)
-        {
             // 可以关闭连接了
             return do_close();
-        }
 
-        // 存入活动Sessions中，并关闭长时间不用的连接。
-        alive_sessions_->remove(address_);
-        if (const auto removed_conn = alive_sessions_->insert(address_, shared_from_this()); removed_conn.has_value())
-            removed_conn.value().second->do_close();
+        if(!keepd_alive)
+        {
+            keepd_alive = true;
+            alive_conns.fetch_add(1);
+        }
 
         // 读其他的请求
         do_read();
@@ -145,7 +147,8 @@ public:
     {
         beast::error_code ec;
 
-        alive_sessions_->remove(address_);
+        if (keepd_alive)
+            alive_conns.fetch_sub(1);
 
         if (const auto errc = stream_.socket().shutdown(tcp::socket::shutdown_send, ec))
             return fail(errc, "close");
@@ -165,13 +168,11 @@ class listener : public std::enable_shared_from_this<listener>
     net::io_context& ioc_;
     tcp::acceptor acceptor_;
     std::shared_ptr<std::filesystem::path> doc_root_;
-    std::shared_ptr<lru_list<std::string, std::shared_ptr<session>>> alive_sessions_;
 
 public:
     listener(net::io_context& ioc, const tcp::endpoint& endpoint,
              std::shared_ptr<std::filesystem::path> const& doc_root):
-        ioc_(ioc), acceptor_(make_strand(ioc)), doc_root_(doc_root),
-        alive_sessions_(std::make_shared<lru_list<std::string, std::shared_ptr<session>>>(500))
+        ioc_(ioc), acceptor_(make_strand(ioc)), doc_root_(doc_root)
     {
         beast::error_code ec;
 
@@ -233,11 +234,8 @@ private:
             return do_accept();
         }
 
-        const auto address = socket.remote_endpoint().address().to_string() + std::to_string(
-            socket.remote_endpoint().port());
-
         std::make_shared<session>(
-            ioc_, alive_sessions_, std::move(socket), address, doc_root_
+            ioc_, std::move(socket), doc_root_
         )->run();
 
         do_accept();
