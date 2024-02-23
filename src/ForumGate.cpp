@@ -1,7 +1,8 @@
 #include <memory>
 #include <filesystem>
 #include <iostream>
-#include <toml.hpp>
+#include <t
+oml.hpp>
 #include <boost/asio.hpp>
 #include <boost/asio/ip/tcp.hpp>
 #include <boost/beast.hpp>
@@ -231,7 +232,8 @@ private:
         if (ec)
         {
             fail(ec, "accept");
-            return do_accept();
+            // return do_accept();
+            return;
         }
 
         std::make_shared<session>(
