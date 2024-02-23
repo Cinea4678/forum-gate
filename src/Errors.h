@@ -5,7 +5,7 @@
 #ifndef ERRORS_H
 #define ERRORS_H
 
-#include "BoostCommon.h"
+#include "Common.h"
 
 http::message_generator
 bad_request(http::request<http::dynamic_body>&& req,

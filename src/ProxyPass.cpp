@@ -7,7 +7,7 @@
 #include <boost/asio/strand.hpp>
 #include <utility>
 
-#include "BoostCommon.h"
+#include "Common.h"
 
 class proxy_session : public std::enable_shared_from_this<proxy_session>
 {
