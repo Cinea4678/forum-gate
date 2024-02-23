@@ -26,7 +26,7 @@ std::atomic_size_t alive_conns;
 const proxy_pass proxy_passes[]
 {
     proxy_pass("/s3"s, boost::urls::parse_uri("http://10.80.43.196:9000").value()),
-    proxy_pass("/api"s, boost::urls::parse_uri("http://localhost:8010").value()),
+    proxy_pass("/api"s, boost::urls::parse_uri("http://10.80.43.196:9002").value()),
     // proxy_passes("/avatar"sv, boost::urls::parse_uri("http://10.80.43.196:9000/forum/user-avatar")),
     proxy_pass("/card"s, boost::urls::parse_uri("http://10.80.43.196:9000/forum/user-avatar").value(), "12h"s),
     proxy_pass("/meili"s, boost::urls::parse_uri("http://10.80.42.189:7700").value()),

@@ -1,4 +1,4 @@
 address = "0.0.0.0"
 port = 80
-doc_root = "/home/cinea/test"
+doc_root = "/www/wwwroot/10.80.43.196"
 threads = 4
